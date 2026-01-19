@@ -12,6 +12,7 @@ let pipes: Pipe[] = [];
 let counter = new Counter();
 let frameCount = 0;
 let gameState: "start" | "playing" | "paused" | "gameover" = "start";
+let isMuted = false; // Audio state
 
 // ================== HIGH SCORE ==================
 let highScore = Number(localStorage.getItem("highScore")) || 0;
@@ -24,50 +25,94 @@ background.src = "/background.jpg";
 function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
+  bird.x = canvas.width / 4; 
   bird.y = canvas.height / 2;
 }
+
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
 
 // ================== RESET GAME ==================
 function resetGame() {
   bird = new Bird();
+  bird.x = canvas.width / 4;
   pipes = [new Pipe(canvas.width, canvas.height)];
   counter = new Counter();
   frameCount = 0;
   gameState = "playing";
 }
 
-// ================== PAUSE ==================
+// ================== TOGGLE FUNCTIONS ==================
 function togglePause() {
   if (gameState === "playing") gameState = "paused";
   else if (gameState === "paused") gameState = "playing";
 }
 
-// ================== INPUT ==================
-window.addEventListener("keydown", (e) => {
-  if (e.code === "Space") {
-    if (gameState === "start" || gameState === "gameover") resetGame();
-    else if (gameState === "playing") bird.jump();
+function toggleMute() {
+  isMuted = !isMuted;
+  // If you add an Audio object later, you would set: myAudio.muted = isMuted;
+}
+
+// ================== INPUT HANDLER ==================
+const handleInput = () => {
+  if (gameState === "start" || gameState === "gameover") {
+    resetGame();
+  } else if (gameState === "playing") {
+    bird.jump();
   }
+};
 
+// Keyboard
+window.addEventListener("keydown", (e: KeyboardEvent) => {
+  if (e.code === "Space") handleInput();
   if (e.code === "KeyP" || e.code === "Escape") togglePause();
+  if (e.code === "KeyM") toggleMute();
 });
 
-canvas.addEventListener("mousedown", () => {
-  if (gameState === "start" || gameState === "gameover") resetGame();
-  else if (gameState === "playing") bird.jump();
+// Touch (Mobile) - Fixes the 'e' error by using it for preventDefault
+canvas.addEventListener("touchstart", (e: TouchEvent) => {
+  if (e.cancelable) e.preventDefault();
+  
+  // Check if user tapped the top right corner for Mute
+  const touchX = e.touches[0].clientX;
+  const touchY = e.touches[0].clientY;
+  if (touchX > canvas.width - 60 && touchY < 60) {
+    toggleMute();
+  } else {
+    handleInput();
+  }
+}, { passive: false });
+
+// Click (Desktop)
+canvas.addEventListener("mousedown", (e: MouseEvent) => {
+  // Check if click is in the Mute button area (top right)
+  if (e.clientX > canvas.width - 60 && e.clientY < 60) {
+    toggleMute();
+  } else if (!('ontouchstart' in window)) {
+    handleInput();
+  }
 });
 
-// ================== TEXT HELPER ==================
-function drawCenterText(text: string, y: number, size = 48) {
-  ctx.fillStyle = "white";
+// ================== DRAW HELPERS ==================
+function drawCenterText(text: string, y: number, size = 48, color = "white") {
+  const responsiveSize = Math.min(size, canvas.width / 10); 
+  ctx.fillStyle = color;
   ctx.strokeStyle = "black";
   ctx.lineWidth = 6;
-  ctx.font = `bold ${size}px Arial`;
+  ctx.font = `bold ${responsiveSize}px Arial`;
   ctx.textAlign = "center";
   ctx.strokeText(text, canvas.width / 2, y);
   ctx.fillText(text, canvas.width / 2, y);
+}
+
+function drawMuteButton() {
+  ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
+  ctx.fillRect(canvas.width - 50, 10, 40, 40);
+  ctx.fillStyle = "black";
+  ctx.font = "20px Arial";
+  ctx.textAlign = "center";
+  // Simple Icon Representation
+  ctx.fillText(isMuted ? "🔇" : "🔊", canvas.width - 30, 38);
 }
 
 // ================== GAME LOOP ==================
@@ -78,14 +123,12 @@ function gameLoop() {
     ctx.drawImage(background, 0, 0, canvas.width, canvas.height);
   }
 
-  // ---------- START SCREEN ----------
   if (gameState === "start") {
     bird.draw(ctx);
-    drawCenterText("FLAPPY BIRD", canvas.height / 2 - 50, 70);
-    drawCenterText("CLICK or SPACE to Start", canvas.height / 2 + 20, 25);
+    drawCenterText("FLAPPY BIRD", canvas.height / 2 - 50, 60);
+    drawCenterText("TAP TO START", canvas.height / 2 + 20, 25);
   }
 
-  // ---------- PLAYING / PAUSED ----------
   if (gameState === "playing" || gameState === "paused") {
     if (gameState === "playing") {
       bird.update();
@@ -97,23 +140,19 @@ function gameLoop() {
 
       pipes.forEach((pipe) => {
         pipe.update();
-
-        // Collision
+        const b = bird.hitbox;
         if (
-          bird.x < pipe.x + PIPE_WIDTH &&
-          bird.x + bird.width > pipe.x &&
-          (bird.y < pipe.topHeight ||
-            bird.y + bird.height > pipe.topHeight + PIPE_GAP)
+          b.x < pipe.x + PIPE_WIDTH &&
+          b.x + b.width > pipe.x &&
+          (b.y < pipe.topHeight ||
+            b.y + b.height > pipe.topHeight + PIPE_GAP)
         ) {
           gameState = "gameover";
         }
 
-        // Score
         if (!pipe.passed && bird.x > pipe.x + PIPE_WIDTH) {
           pipe.passed = true;
           counter.increase();
-
-          // ⭐ HIGH SCORE UPDATE
           if (counter.score > highScore) {
             highScore = counter.score;
             localStorage.setItem("highScore", highScore.toString());
@@ -131,18 +170,14 @@ function gameLoop() {
     pipes.forEach((p) => p.draw(ctx, canvas.height));
     bird.draw(ctx);
 
-    // ---------- SCORE DISPLAY ----------
+    // Score
     ctx.fillStyle = "white";
     ctx.strokeStyle = "black";
     ctx.lineWidth = 4;
-    ctx.font = "bold 32px Arial";
+    ctx.font = `bold ${Math.max(20, canvas.width / 20)}px Arial`;
     ctx.textAlign = "left";
-
-    ctx.strokeText(`Score: ${counter.score}`, 20, 50);
-    ctx.fillText(`Score: ${counter.score}`, 20, 50);
-
-    ctx.strokeText(`High: ${highScore}`, 20, 90);
-    ctx.fillText(`High: ${highScore}`, 20, 90);
+    ctx.strokeText(`Score: ${counter.score}`, 10, 70);
+    ctx.fillText(`Score: ${counter.score}`, 10, 70);
 
     if (gameState === "paused") {
       ctx.fillStyle = "rgba(0,0,0,0.3)";
@@ -151,15 +186,18 @@ function gameLoop() {
     }
   }
 
-  // ---------- GAME OVER ----------
   if (gameState === "gameover") {
     pipes.forEach((p) => p.draw(ctx, canvas.height));
     bird.draw(ctx);
-    drawCenterText("GAME OVER", canvas.height / 2 - 20, 60);
-    drawCenterText(`SCORE: ${counter.score}`, canvas.height / 2 + 40, 30);
-    drawCenterText(`HIGH SCORE: ${highScore}`, canvas.height / 2 + 80, 28);
+    ctx.fillStyle = "rgba(0,0,0,0.5)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    drawCenterText("GAME OVER", canvas.height / 2 - 80, 50);
+    drawCenterText(`SCORE: ${counter.score}`, canvas.height / 2 - 20, 30);
+    drawCenterText(`BEST: ${highScore}`, canvas.height / 2 + 20, 28);
+    drawCenterText("TAP TO RESTART", canvas.height / 2 + 90, 22, "#FFD700");
   }
 
+  drawMuteButton(); // Always draw mute button on top
   requestAnimationFrame(gameLoop);
 }
 
